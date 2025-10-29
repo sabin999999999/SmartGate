@@ -1,0 +1,163 @@
+//@version=5
+strategy("AI-Inspired Trading Bot", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// ============================================
+// INPUT PARAMETERS
+// ============================================
+// Trend Detection
+emaFast = input.int(9, "Fast EMA Period", minval=1)
+emaSlow = input.int(21, "Slow EMA Period", minval=1)
+emaLong = input.int(50, "Long EMA Period", minval=1)
+
+// RSI Settings
+rsiPeriod = input.int(14, "RSI Period", minval=1)
+rsiOverbought = input.int(70, "RSI Overbought Level", minval=50, maxval=100)
+rsiOversold = input.int(30, "RSI Oversold Level", minval=0, maxval=50)
+
+// MACD Settings
+macdFast = input.int(12, "MACD Fast Length", minval=1)
+macdSlow = input.int(26, "MACD Slow Length", minval=1)
+macdSignal = input.int(9, "MACD Signal Length", minval=1)
+
+// Volume Filter
+volumeMA = input.int(20, "Volume MA Period", minval=1)
+volumeMultiplier = input.float(1.5, "Volume Spike Multiplier", minval=0.1, step=0.1)
+
+// Risk Management
+stopLossPercent = input.float(2.0, "Stop Loss %", minval=0.1, step=0.1)
+takeProfitPercent = input.float(4.0, "Take Profit %", minval=0.1, step=0.1)
+useTrailingStop = input.bool(true, "Use Trailing Stop")
+trailingStopPercent = input.float(1.5, "Trailing Stop %", minval=0.1, step=0.1)
+
+// ============================================
+// INDICATOR CALCULATIONS
+// ============================================
+// EMAs
+ema9 = ta.ema(close, emaFast)
+ema21 = ta.ema(close, emaSlow)
+ema50 = ta.ema(close, emaLong)
+
+// RSI
+rsi = ta.rsi(close, rsiPeriod)
+
+// MACD
+[macdLine, signalLine, macdHist] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+// Volume
+volMA = ta.sma(volume, volumeMA)
+volumeSpike = volume > volMA * volumeMultiplier
+
+// ATR for volatility
+atr = ta.atr(14)
+
+// Bollinger Bands
+bbLength = 20
+bbMult = 2.0
+bbBasis = ta.sma(close, bbLength)
+bbDev = bbMult * ta.stdev(close, bbLength)
+bbUpper = bbBasis + bbDev
+bbLower = bbBasis - bbDev
+
+// ============================================
+// AI-INSPIRED SIGNAL LOGIC
+// ============================================
+// Trend Strength Score
+trendScore = 0.0
+if ema9 > ema21 and ema21 > ema50
+    trendScore := 100
+else if ema9 > ema21
+    trendScore := 60
+else if ema9 < ema21 and ema21 < ema50
+    trendScore := 0
+else
+    trendScore := 40
+
+// Momentum Score
+momentumScore = rsi
+
+// MACD Score
+macdScore = 50.0
+if macdLine > signalLine and macdLine > 0
+    macdScore := 100
+else if macdLine > signalLine
+    macdScore := 75
+else if macdLine < signalLine and macdLine < 0
+    macdScore := 0
+else
+    macdScore := 25
+
+// Volume Score
+volumeScore = volumeSpike ? 100 : 50
+
+// Price Position Score
+priceRange = bbUpper - bbLower
+pricePosition = priceRange != 0 ? ((close - bbLower) / priceRange) * 100 : 50
+
+// ============================================
+// COMPOSITE AI SCORE
+// ============================================
+trendWeight = 0.30
+momentumWeight = 0.25
+macdWeight = 0.20
+volumeWeight = 0.15
+priceWeight = 0.10
+
+aiScore = (trendScore * trendWeight) + (momentumScore * momentumWeight) + (macdScore * macdWeight) + (volumeScore * volumeWeight) + (pricePosition * priceWeight)
+
+// ============================================
+// ENTRY CONDITIONS - FIXED
+// ============================================
+longCondition = aiScore > 65 and ema9 > ema21 and rsi > 50 and rsi < rsiOverbought and macdLine > signalLine and close > ema50
+
+shortCondition = aiScore < 35 and ema9 < ema21 and rsi < 50 and rsi > rsiOversold and macdLine < signalLine and close < ema50
+
+// ============================================
+// STRATEGY EXECUTION
+// ============================================
+if longCondition
+    strategy.entry("Long", strategy.long)
+    stopLoss = close * (1 - stopLossPercent / 100)
+    takeProfit = close * (1 + takeProfitPercent / 100)
+    if useTrailingStop
+        strategy.exit("Exit Long", "Long", stop=stopLoss, limit=takeProfit, trail_points=close * trailingStopPercent / 100)
+    else
+        strategy.exit("Exit Long", "Long", stop=stopLoss, limit=takeProfit)
+
+if shortCondition
+    strategy.entry("Short", strategy.short)
+    stopLoss = close * (1 + stopLossPercent / 100)
+    takeProfit = close * (1 - takeProfitPercent / 100)
+    if useTrailingStop
+        strategy.exit("Exit Short", "Short", stop=stopLoss, limit=takeProfit, trail_points=close * trailingStopPercent / 100)
+    else
+        strategy.exit("Exit Short", "Short", stop=stopLoss, limit=takeProfit)
+
+// ============================================
+// VISUALIZATION
+// ============================================
+// Plot EMAs
+plot(ema9, "EMA 9", color=color.blue, linewidth=2)
+plot(ema21, "EMA 21", color=color.orange, linewidth=2)
+plot(ema50, "EMA 50", color=color.red, linewidth=2)
+
+// Plot Bollinger Bands
+p1 = plot(bbUpper, "BB Upper", color=color.gray, linewidth=1)
+p2 = plot(bbLower, "BB Lower", color=color.gray, linewidth=1)
+fill(p1, p2, color=color.new(color.gray, 90))
+
+// Background color based on AI Score
+bgColor = aiScore > 70 ? color.new(color.green, 90) : aiScore < 30 ? color.new(color.red, 90) : color.new(color.gray, 95)
+bgcolor(bgColor, title="AI Score Background")
+
+// Plot Buy/Sell Signals
+plotshape(longCondition, "Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(shortCondition, "Sell Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// ============================================
+// LABELS WITH AI SCORE
+// ============================================
+if longCondition
+    label.new(bar_index, low, "BUY\nAI: " + str.tostring(aiScore, "#.#"), style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+
+if shortCondition
+    label.new(bar_index, high, "SELL\nAI: " + str.tostring(aiScore, "#.#"), style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
